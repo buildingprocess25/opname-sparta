@@ -98,13 +98,13 @@ const resolveContractorUsername = async (input) => {
 
     const rows = await sheet.getRows();
     const norm = (v) => (v ?? "").toString().trim().toLowerCase();
-    const raw  = (input ?? "").toString().trim();
+    const raw = (input ?? "").toString().trim();
 
     const hit = rows.find(r =>
       norm(r.get("kontraktor_username")) === norm(raw) ||
-      norm(r.get("nama_kontraktor"))     === norm(raw) ||
+      norm(r.get("nama_kontraktor")) === norm(raw) ||
       // beberapa baris kolom C pernah berisi email → samakan juga
-      norm(r.get("nama_kontraktor"))     === norm(raw.split(",")[0])
+      norm(r.get("nama_kontraktor")) === norm(raw.split(",")[0])
     );
 
     return hit?.get("kontraktor_username")
@@ -129,7 +129,7 @@ const resolveContractorCompanyName = async (input) => {
     const r = rows.find((row) => {
       return (
         norm(row.get("kontraktor_username")) === norm(input) ||
-        norm(row.get("nama_kontraktor"))     === norm(input)
+        norm(row.get("nama_kontraktor")) === norm(input)
       );
     });
 
@@ -290,12 +290,12 @@ app.post("/api/login", async (req, res) => {
     const inputPassword = String(password).trim();
 
     // 1) Coba login sebagai PIC lewat sheet 'users' (tetap seperti semula)
-    const usersSheet = doc.sheetsByTitle["users"];
+    const usersSheet = doc.sheetsByTitle["Cabang"];
     if (usersSheet) {
       const rows = await usersSheet.getRows();
       const userRow = rows.find((row) => {
-        const sheetUsername = row.get("username")?.trim();
-        const sheetPassword = row.get("password")?.toString().trim();
+        const sheetUsername = row.get("EMAIL_SAT")?.trim();
+        const sheetPassword = row.get("CABANG")?.toString().trim();
         return (
           sheetUsername?.toLowerCase() === inputUsername.toLowerCase() &&
           sheetPassword === inputPassword
@@ -306,8 +306,9 @@ app.post("/api/login", async (req, res) => {
         await logLoginAttempt(inputUsername, "SUCCESS(PIC)");
         const userData = {
           id: userRow.get("id"),
-          username: userRow.get("username"),
-          name: userRow.get("name"),
+          username: userRow.get("EMAIL_SAT"),
+          name: userRow.get("NAMA LENGKAP"),
+          jabatan: userRow.get("JABATAN"),
           role: userRow.get("role"),
           ...(userRow.get("role") === "pic" && {
             kode_toko: userRow.get("kode_toko"),
@@ -340,35 +341,35 @@ app.post("/api/login", async (req, res) => {
       );
     });
 
-if (kRow) {
-  const status = (kRow.get("status_kontraktor") || "")
-    .toString()
-    .trim()
-    .toUpperCase();
-  if (status && status !== "AKTIF") {
-    await logLoginAttempt(inputUsername, "FAILED(NOT_ACTIVE)");
-    return res.status(403).json({ message: "Akun kontraktor tidak aktif." });
-  }
+    if (kRow) {
+      const status = (kRow.get("status_kontraktor") || "")
+        .toString()
+        .trim()
+        .toUpperCase();
+      if (status && status !== "AKTIF") {
+        await logLoginAttempt(inputUsername, "FAILED(NOT_ACTIVE)");
+        return res.status(403).json({ message: "Akun kontraktor tidak aktif." });
+      }
 
-  // Ambil username standar dari kolom E (kontraktor_username)
-  const kontraktorUsername = (kRow.get("kontraktor_username") || "")
-    .toString()
-    .trim();
-  const namaKontraktor = (kRow.get("nama_kontraktor") || "").toString().trim();
+      // Ambil username standar dari kolom E (kontraktor_username)
+      const kontraktorUsername = (kRow.get("kontraktor_username") || "")
+        .toString()
+        .trim();
+      const namaKontraktor = (kRow.get("nama_kontraktor") || "").toString().trim();
 
-  await logLoginAttempt(inputUsername, "SUCCESS(KONTRAKTOR)");
-return res.status(200).json({
-  id: kRow.get("no") || "",
-  // pakai username standar dari kolom E
-  username: kontraktorUsername || namaKontraktor || inputUsername,
-  name: kontraktorUsername || namaKontraktor || inputUsername,
-  kontraktor_username: kontraktorUsername || "",
-  role: "kontraktor",
-  company: namaKontraktor, // kolom C = nama perusahaan
-  cabang: kRow.get("nama_cabang") || "",
-  status_kontraktor: kRow.get("status_kontraktor") || "",
-});
-}
+      await logLoginAttempt(inputUsername, "SUCCESS(KONTRAKTOR)");
+      return res.status(200).json({
+        id: kRow.get("no") || "",
+        // pakai username standar dari kolom E
+        username: kontraktorUsername || namaKontraktor || inputUsername,
+        name: kontraktorUsername || namaKontraktor || inputUsername,
+        kontraktor_username: kontraktorUsername || "",
+        role: "kontraktor",
+        company: namaKontraktor, // kolom C = nama perusahaan
+        cabang: kRow.get("nama_cabang") || "",
+        status_kontraktor: kRow.get("status_kontraktor") || "",
+      });
+    }
 
 
     // 3) Jika tidak cocok di keduanya
@@ -724,63 +725,63 @@ app.get("/api/opname", async (req, res) => {
     };
 
     // BENTUK LIST TASK DARI RAB (TIDAK DIDE-DUP)
-const tasks = rabRows
-  .filter(
-    (row) =>
-      norm(row.get("kode_toko")) === norm(kode_toko) &&
-      norm(row.get("no_ulok")) === norm(no_ulok) &&
-      (!qLing || norm(row.get("lingkup_pekerjaan")) === qLing)
-  )
-  .map((row) => {
-    const jenis_pekerjaan = row.get("jenis_pekerjaan");
-    const lingkup_pekerjaan = row.get("lingkup_pekerjaan") || "";
-    const satuan = row.get("satuan");
-    const harga_material = row.get("harga_material") || 0;
-    const harga_upah = row.get("harga_upah") || 0;
-    const rab_key_raw = row.get("rab_key") || "";
-    const rab_key = rab_key_raw || makeRabKey(row);
+    const tasks = rabRows
+      .filter(
+        (row) =>
+          norm(row.get("kode_toko")) === norm(kode_toko) &&
+          norm(row.get("no_ulok")) === norm(no_ulok) &&
+          (!qLing || norm(row.get("lingkup_pekerjaan")) === qLing)
+      )
+      .map((row) => {
+        const jenis_pekerjaan = row.get("jenis_pekerjaan");
+        const lingkup_pekerjaan = row.get("lingkup_pekerjaan") || "";
+        const satuan = row.get("satuan");
+        const harga_material = row.get("harga_material") || 0;
+        const harga_upah = row.get("harga_upah") || 0;
+        const rab_key_raw = row.get("rab_key") || "";
+        const rab_key = rab_key_raw || makeRabKey(row);
 
-    // --- TAMBAHAN BARU: BACA KOLOM IL ---
-    const valIL = (row.get("IL") || "").toString().trim().toLowerCase();
-    const is_il = valIL === "ya";
-    // ------------------------------------
+        // --- TAMBAHAN BARU: BACA KOLOM IL ---
+        const valIL = (row.get("IL") || "").toString().trim().toLowerCase();
+        const is_il = valIL === "ya";
+        // ------------------------------------
 
-    const matched = takeMatch(
-      submittedList,
-      jenis_pekerjaan,
-      lingkup_pekerjaan,
-      satuan,
-      harga_material,
-      harga_upah,
-      rab_key
-    );
+        const matched = takeMatch(
+          submittedList,
+          jenis_pekerjaan,
+          lingkup_pekerjaan,
+          satuan,
+          harga_material,
+          harga_upah,
+          rab_key
+        );
 
-    return {
-      kategori_pekerjaan: row.get("kategori_pekerjaan"),
-      lingkup_pekerjaan,
-      jenis_pekerjaan,
-      vol_rab: row.get("vol_rab"),
-      satuan,
-      harga_material,
-      harga_upah,
-      rab_key,
+        return {
+          kategori_pekerjaan: row.get("kategori_pekerjaan"),
+          lingkup_pekerjaan,
+          jenis_pekerjaan,
+          vol_rab: row.get("vol_rab"),
+          satuan,
+          harga_material,
+          harga_upah,
+          rab_key,
 
-      // --- KIRYM STATUS IL KE FRONTEND ---
-      is_il: is_il,
-      // -----------------------------------
+          // --- KIRYM STATUS IL KE FRONTEND ---
+          is_il: is_il,
+          // -----------------------------------
 
-      item_id: matched?.item_id || null,
-      volume_akhir: matched?.vol_akhir || "",
-      selisih: matched?.selisih || "",
-      isSubmitted: !!matched,
-      approval_status: matched?.approval_status || "Not Submitted",
-      submissionTime: matched?.tanggal_submit || null,
-      foto_url: matched?.foto_url || null,
-      catatan: matched?.catatan || "",
-    };
-  });
+          item_id: matched?.item_id || null,
+          volume_akhir: matched?.vol_akhir || "",
+          selisih: matched?.selisih || "",
+          isSubmitted: !!matched,
+          approval_status: matched?.approval_status || "Not Submitted",
+          submissionTime: matched?.tanggal_submit || null,
+          foto_url: matched?.foto_url || null,
+          catatan: matched?.catatan || "",
+        };
+      });
 
-return res.status(200).json(tasks);
+    return res.status(200).json(tasks);
   } catch (error) {
     console.error("Error di /api/opname:", error);
     return res.status(500).json({ message: "Terjadi kesalahan pada server." });
@@ -944,10 +945,10 @@ app.post("/api/opname/item/submit", async (req, res) => {
     const item_id = existingRow
       ? existingRow.get("item_id")
       : `${itemData.kode_toko}-${itemData.no_ulok}-${(
-          itemData.jenis_pekerjaan || ""
-        )
-          .toString()
-          .replace(/[^a-zA-Z0-9]/g, "-")}-${Date.now()}`;
+        itemData.jenis_pekerjaan || ""
+      )
+        .toString()
+        .replace(/[^a-zA-Z0-9]/g, "-")}-${Date.now()}`;
 
     // DATA ROW (Termasuk nama_toko)
     const rowValues = {
@@ -1172,7 +1173,7 @@ app.get("/api/opname/final", async (req, res) => {
         (row.get("kontraktor_username") || "").toString().trim() ||
         (row.get("kontraktor") || "").toString().trim(),
     }));
-    
+
 
     return res.status(200).json(submissions);
   } catch (error) {
@@ -1394,17 +1395,17 @@ app.patch("/api/opname/approve", async (req, res) => {
     }
 
     target.set("approval_status", "APPROVED"); // konsisten
-if (kontraktor_username && String(kontraktor_username).trim()) {
-  // Ubah input apa pun (email/nama perusahaan/username) menjadi username standar dari data_kontraktor (kolom E)
-  const storedUsername = await resolveContractorUsername(kontraktor_username);
-  target.set("kontraktor_username", storedUsername);
+    if (kontraktor_username && String(kontraktor_username).trim()) {
+      // Ubah input apa pun (email/nama perusahaan/username) menjadi username standar dari data_kontraktor (kolom E)
+      const storedUsername = await resolveContractorUsername(kontraktor_username);
+      target.set("kontraktor_username", storedUsername);
 
-  // Isi kolom 'kontraktor' dengan NAMA PERUSAHAAN dari data_kontraktor (kolom C)
-  const companyName = await resolveContractorCompanyName(storedUsername);
-  if (companyName) {
-    target.set("kontraktor", companyName);
-  }
-}
+      // Isi kolom 'kontraktor' dengan NAMA PERUSAHAAN dari data_kontraktor (kolom C)
+      const companyName = await resolveContractorCompanyName(storedUsername);
+      if (companyName) {
+        target.set("kontraktor", companyName);
+      }
+    }
 
 
     await finalSheet.loadHeaderRow();
@@ -1412,12 +1413,12 @@ if (kontraktor_username && String(kontraktor_username).trim()) {
     const CAT_KEY = headers.includes("catatan")
       ? "catatan"
       : headers.includes("Catatan")
-      ? "Catatan"
-      : headers.includes("CATATAN")
-      ? "CATATAN"
-      : headers.includes("")
-      ? ""
-      : "catatan";
+        ? "Catatan"
+        : headers.includes("CATATAN")
+          ? "CATATAN"
+          : headers.includes("")
+            ? ""
+            : "catatan";
 
     if (typeof catatan === "string" && catatan.trim()) {
       const prev = target.get(CAT_KEY) || "";
@@ -1463,15 +1464,15 @@ app.patch("/api/opname/reject", async (req, res) => {
 
     // Update status jadi REJECTED
     row.set("approval_status", "REJECTED");
-if (kontraktor_username && String(kontraktor_username).trim()) {
-  const storedUsername = await resolveContractorUsername(kontraktor_username);
-  row.set("kontraktor_username", storedUsername);
+    if (kontraktor_username && String(kontraktor_username).trim()) {
+      const storedUsername = await resolveContractorUsername(kontraktor_username);
+      row.set("kontraktor_username", storedUsername);
 
-  const companyName = await resolveContractorCompanyName(storedUsername);
-  if (companyName) {
-    row.set("kontraktor", companyName);
-  }
-}
+      const companyName = await resolveContractorCompanyName(storedUsername);
+      if (companyName) {
+        row.set("kontraktor", companyName);
+      }
+    }
 
 
     // 🔹 Tambah catatan
@@ -1480,12 +1481,12 @@ if (kontraktor_username && String(kontraktor_username).trim()) {
     const CAT_KEY = headers.includes("catatan")
       ? "catatan"
       : headers.includes("Catatan")
-      ? "Catatan"
-      : headers.includes("CATATAN")
-      ? "CATATAN"
-      : headers.includes("")
-      ? ""
-      : "catatan";
+        ? "Catatan"
+        : headers.includes("CATATAN")
+          ? "CATATAN"
+          : headers.includes("")
+            ? ""
+            : "catatan";
 
     if (typeof catatan === "string" && catatan.trim()) {
       const prev = row.get(CAT_KEY) || "";
