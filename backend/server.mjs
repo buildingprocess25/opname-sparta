@@ -461,11 +461,11 @@ app.get("/api/toko", async (req, res) => {
 
     await doc.loadInfo();
     const rabSheet = doc.sheetsByTitle["data_rab"];
-    const usersSheet = doc.sheetsByTitle["users"];
+    const usersSheet = doc.sheetsByTitle["Cabang"];
     if (!rabSheet || !usersSheet) {
       return res
         .status(500)
-        .json({ message: "Sheet 'data_rab' atau 'users' tidak ditemukan." });
+        .json({ message: "Sheet 'data_rab' atau 'Cabang' tidak ditemukan." });
     }
 
     const [rabRows, userRows] = await Promise.all([
@@ -475,10 +475,10 @@ app.get("/api/toko", async (req, res) => {
 
     const norm = (v) => (v ?? "").toString().trim().toUpperCase();
 
-    // Ambil baris PIC dari tab users
+    // Ambil baris PIC dari tab Cabang
     const picRow = userRows.find(
       (r) =>
-        norm(r.get("username")) === norm(username) &&
+        norm(r.get("EMAIL_SAT")) === norm(username) &&
         (r.get("role") || "").toLowerCase() === "pic"
     );
 
