@@ -1350,6 +1350,8 @@ app.get("/api/opname/pending", async (req, res) => {
       return sameToko && sameUlok && (status === "" || status === "PENDING");
     });
 
+    const fallbackName = "Tanpa Nama";
+
     const result = pending.map((row) => ({
       kategori_pekerjaan: row.get("kategori_pekerjaan") || "",
       item_id: row.get("item_id") || null,
