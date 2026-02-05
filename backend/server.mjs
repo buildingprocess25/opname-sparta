@@ -1674,9 +1674,9 @@ app.get("/api/cek_keterlambatan", async (req, res) => {
       });
     }
 
-    // Hitung deadline: Akhir_SPK + tambah_spk hari
+    // Hitung deadline: Akhir_SPK + 1 hari + tambah_spk hari
     const deadlineDate = new Date(akhirSpkDate);
-    deadlineDate.setDate(deadlineDate.getDate() + tambahSpk);
+    deadlineDate.setDate(deadlineDate.getDate() + 1 + tambahSpk);
 
     // Jika tanggal_serah_terima kosong, belum bisa dihitung keterlambatan
     if (!tanggalSerahTerimaDate) {
