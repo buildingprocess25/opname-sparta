@@ -1553,6 +1553,167 @@ app.get("/api/pic-list", async (req, res) => {
   }
 });
 
+// --- ENDPOINT CEK KETERLAMBATAN ---
+app.get("/api/cek_keterlambatan", async (req, res) => {
+  try {
+    const { no_ulok, lingkup_pekerjaan } = req.query;
+
+    if (!no_ulok || !lingkup_pekerjaan) {
+      return res.status(400).json({
+        message: "Parameter no_ulok dan lingkup_pekerjaan wajib diisi.",
+      });
+    }
+
+    await doc.loadInfo();
+    const summarySheet = doc.sheetsByTitle["summary"];
+    if (!summarySheet) {
+      return res.status(404).json({
+        message: "Sheet 'summary' tidak ditemukan.",
+      });
+    }
+
+    const rows = await summarySheet.getRows();
+    const norm = (v) => (v ?? "").toString().trim().toUpperCase();
+
+    // Cari baris yang cocok dengan no_ulok dan lingkup_pekerjaan
+    const targetRow = rows.find(
+      (row) =>
+        norm(row.get("no_ulok")) === norm(no_ulok) &&
+        norm(row.get("lingkup_pekerjaan")) === norm(lingkup_pekerjaan)
+    );
+
+    if (!targetRow) {
+      return res.status(404).json({
+        message: `Data dengan no_ulok "${no_ulok}" dan lingkup_pekerjaan "${lingkup_pekerjaan}" tidak ditemukan.`,
+      });
+    }
+
+    // Ambil nilai dari kolom yang diperlukan
+    const akhirSpkRaw = targetRow.get("Akhir_SPK") || targetRow.get("akhir_spk") || "";
+    const tambahSpkRaw = targetRow.get("tambah_spk") || targetRow.get("Tambah_SPK") || "0";
+    const tanggalSerahTerimaRaw = targetRow.get("tanggal_serah_terima") ||
+      targetRow.get("Tanggal_Serah_Terima") ||
+      targetRow.get("tanggal_serah_terima") || "";
+
+    // Parse tambah_spk (hari tambahan)
+    const tambahSpk = parseInt(String(tambahSpkRaw).replace(/[^0-9\-]/g, ""), 10) || 0;
+
+    // Fungsi untuk parse tanggal dengan berbagai format
+    const parseDate = (dateStr) => {
+      if (!dateStr || String(dateStr).trim() === "") return null;
+      const str = String(dateStr).trim();
+
+      // Format: DD-Mon-YYYY (e.g., 15-Jan-2026)
+      const monthMap = {
+        jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+        jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+        januari: 0, februari: 1, maret: 2, april: 3, mei: 4, juni: 5,
+        juli: 6, agustus: 7, september: 8, oktober: 9, november: 10, desember: 11,
+      };
+
+      // Try DD-Mon-YYYY or DD Mon YYYY
+      const match1 = str.match(/^(\d{1,2})[\-\s]([a-zA-Z]+)[\-\s](\d{4})/);
+      if (match1) {
+        const day = parseInt(match1[1], 10);
+        const month = monthMap[match1[2].toLowerCase()];
+        const year = parseInt(match1[3], 10);
+        if (month !== undefined) {
+          return new Date(year, month, day);
+        }
+      }
+
+      // Try DD Month YYYY (e.g., 20 January 2026)
+      const match2 = str.match(/^(\d{1,2})\s+([a-zA-Z]+)\s+(\d{4})/);
+      if (match2) {
+        const day = parseInt(match2[1], 10);
+        const monthName = match2[2].toLowerCase();
+        const monthMapFull = {
+          january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+          july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
+        };
+        const month = monthMapFull[monthName] ?? monthMap[monthName.slice(0, 3)];
+        const year = parseInt(match2[3], 10);
+        if (month !== undefined) {
+          return new Date(year, month, day);
+        }
+      }
+
+      // Try YYYY-MM-DD or YYYY/MM/DD
+      const match3 = str.match(/^(\d{4})[\-\/](\d{1,2})[\-\/](\d{1,2})/);
+      if (match3) {
+        return new Date(parseInt(match3[1], 10), parseInt(match3[2], 10) - 1, parseInt(match3[3], 10));
+      }
+
+      // Try DD/MM/YYYY or DD-MM-YYYY
+      const match4 = str.match(/^(\d{1,2})[\-\/](\d{1,2})[\-\/](\d{4})/);
+      if (match4) {
+        return new Date(parseInt(match4[3], 10), parseInt(match4[2], 10) - 1, parseInt(match4[1], 10));
+      }
+
+      // Fallback: try native Date parse
+      const parsed = new Date(str);
+      return isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const akhirSpkDate = parseDate(akhirSpkRaw);
+    const tanggalSerahTerimaDate = parseDate(tanggalSerahTerimaRaw);
+
+    if (!akhirSpkDate) {
+      return res.status(400).json({
+        message: "Tanggal Akhir_SPK tidak valid atau kosong.",
+        akhir_spk_raw: akhirSpkRaw,
+      });
+    }
+
+    // Hitung deadline: Akhir_SPK + tambah_spk hari
+    const deadlineDate = new Date(akhirSpkDate);
+    deadlineDate.setDate(deadlineDate.getDate() + tambahSpk);
+
+    // Jika tanggal_serah_terima kosong, belum bisa dihitung keterlambatan
+    if (!tanggalSerahTerimaDate) {
+      return res.status(200).json({
+        no_ulok: no_ulok,
+        lingkup_pekerjaan: lingkup_pekerjaan,
+        akhir_spk: akhirSpkRaw,
+        tambah_spk: tambahSpk,
+        deadline: deadlineDate.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" }),
+        tanggal_serah_terima: null,
+        status: "BELUM_SERAH_TERIMA",
+        message: "Tanggal serah terima belum diisi.",
+        terlambat: false,
+        hari_terlambat: 0,
+      });
+    }
+
+    // Hitung selisih hari
+    const diffTime = tanggalSerahTerimaDate.getTime() - deadlineDate.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+    const isTerlambat = diffDays > 0;
+
+    return res.status(200).json({
+      no_ulok: no_ulok,
+      lingkup_pekerjaan: lingkup_pekerjaan,
+      akhir_spk: akhirSpkRaw,
+      tambah_spk: tambahSpk,
+      deadline: deadlineDate.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" }),
+      tanggal_serah_terima: tanggalSerahTerimaRaw,
+      status: isTerlambat ? "TERLAMBAT" : "TEPAT_WAKTU",
+      terlambat: isTerlambat,
+      hari_terlambat: isTerlambat ? diffDays : 0,
+      message: isTerlambat
+        ? `Terlambat ${diffDays} hari dari deadline.`
+        : `Serah terima tepat waktu atau lebih awal ${Math.abs(diffDays)} hari.`,
+    });
+  } catch (error) {
+    console.error("Error di /api/cek_keterlambatan:", error);
+    return res.status(500).json({
+      message: "Terjadi kesalahan pada server.",
+      error: error.message,
+    });
+  }
+});
+
 
 // 6. Menjalankan server
 // ✅ Route untuk uptime monitor (UptimeRobot)
