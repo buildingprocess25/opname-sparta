@@ -1575,12 +1575,23 @@ app.get("/api/cek_keterlambatan", async (req, res) => {
     const rows = await summarySheet.getRows();
     const norm = (v) => (v ?? "").toString().trim().toUpperCase();
 
+    // Helper untuk ambil nilai dari berbagai kemungkinan nama kolom
+    const getCol = (row, ...keys) => {
+      for (const k of keys) {
+        const val = row.get(k);
+        if (val !== undefined && val !== null && String(val).trim() !== "") {
+          return String(val).trim();
+        }
+      }
+      return "";
+    };
+
     // Cari baris yang cocok dengan no_ulok dan lingkup_pekerjaan
-    const targetRow = rows.find(
-      (row) =>
-        norm(row.get("no_ulok")) === norm(no_ulok) &&
-        norm(row.get("lingkup_pekerjaan")) === norm(lingkup_pekerjaan)
-    );
+    const targetRow = rows.find((row) => {
+      const rowUlok = getCol(row, "Nomor Ulok", "Nomor_Ulok", "no_ulok", "No_Ulok", "NO_ULOK");
+      const rowLingkup = getCol(row, "Lingkup_Pekerjaan", "lingkup_pekerjaan", "Lingkup Pekerjaan", "LINGKUP_PEKERJAAN");
+      return norm(rowUlok) === norm(no_ulok) && norm(rowLingkup) === norm(lingkup_pekerjaan);
+    });
 
     if (!targetRow) {
       return res.status(404).json({
@@ -1588,12 +1599,10 @@ app.get("/api/cek_keterlambatan", async (req, res) => {
       });
     }
 
-    // Ambil nilai dari kolom yang diperlukan
-    const akhirSpkRaw = targetRow.get("Akhir_SPK") || targetRow.get("akhir_spk") || "";
-    const tambahSpkRaw = targetRow.get("tambah_spk") || targetRow.get("Tambah_SPK") || "0";
-    const tanggalSerahTerimaRaw = targetRow.get("tanggal_serah_terima") ||
-      targetRow.get("Tanggal_Serah_Terima") ||
-      targetRow.get("tanggal_serah_terima") || "";
+    // Ambil nilai dari kolom yang diperlukan (gunakan helper getCol)
+    const akhirSpkRaw = getCol(targetRow, "Akhir_SPK", "akhir_spk", "AKHIR_SPK");
+    const tambahSpkRaw = getCol(targetRow, "tambah_spk", "Tambah_SPK", "TAMBAH_SPK") || "0";
+    const tanggalSerahTerimaRaw = getCol(targetRow, "tanggal_serah_terima", "Tanggal_Serah_Terima", "tanggal_serah_terima", "TANGGAL_SERAH_TERIMA");
 
     // Parse tambah_spk (hari tambahan)
     const tambahSpk = parseInt(String(tambahSpkRaw).replace(/[^0-9\-]/g, ""), 10) || 0;
