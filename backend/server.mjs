@@ -1172,6 +1172,9 @@ app.get("/api/opname/final", async (req, res) => {
       satuan: row.get("satuan"),
       harga_material: row.get("harga_material"),
       harga_upah: row.get("harga_upah"),
+      desain: row.get("desain") || "",
+      kualitas: row.get("kualitas") || "",
+      spesifikasi: row.get("spesifikasi") || "",
       volume_akhir: row.get("volume_akhir"),
       selisih: row.get("selisih"),
       total_harga_akhir: row.get("total_harga_akhir"),
@@ -1375,6 +1378,10 @@ app.get("/api/opname/pending", async (req, res) => {
       volume_akhir: row.get("volume_akhir") || "",
       pic_username: row.get("pic_username") || "",
       tanggal_submit: row.get("tanggal_submit") || "",
+      desain: row.get("desain") || "",
+      kualitas: row.get("kualitas") || "",
+      spesifikasi: row.get("spesifikasi") || "",
+
       // informasi tambahan kalau kamu ingin tampilkan
       vol_rab: row.get("vol_rab") || "",
       satuan: row.get("satuan") || "",
