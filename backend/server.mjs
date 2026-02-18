@@ -673,6 +673,9 @@ app.get("/api/opname", async (req, res) => {
         satuan: row.get("satuan"),
         harga_material: row.get("harga_material"),
         harga_upah: row.get("harga_upah"),
+        desain: row.get("desain") || "",
+        kualitas: row.get("kualitas") || "",
+        spesifikasi: row.get("spesifikasi") || "",
         rab_key: row.get("rab_key") || "",
         catatan: getCatatan(row),
       }));
