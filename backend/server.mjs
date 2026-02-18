@@ -768,6 +768,9 @@ app.get("/api/opname", async (req, res) => {
           harga_material,
           harga_upah,
           rab_key,
+          desain: row.get("desain") || "",
+          kualitas: row.get("kualitas") || "",
+          spesifikasi: row.get("spesifikasi") || "",
 
           // --- KIRYM STATUS IL KE FRONTEND ---
           is_il: is_il,
