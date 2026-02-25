@@ -25,6 +25,8 @@ const allowedOrigins = [
   "https://sparta-alfamart.vercel.app/",
   "http://localhost:3000", // Next.js dev
   "http://127.0.0.1:3000",
+  "https://sparta-bnm.vercel.app/",
+  "https://sparta-bnm.vercel.app",
 ];
 app.use(
   cors({
