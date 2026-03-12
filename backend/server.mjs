@@ -290,6 +290,8 @@ app.post("/api/login", async (req, res) => {
 
     const inputUsername = String(username).trim();
     const inputPassword = String(password).trim();
+    console.log(`Login attempt: ${inputUsername}`);
+    console.log(`Password received: ${inputPassword ? "[PROVIDED]" : "[MISSING]"}`);
 
     // 1) Coba login sebagai PIC lewat sheet 'users' (tetap seperti semula)
     const usersSheet = doc.sheetsByTitle["Cabang"];
