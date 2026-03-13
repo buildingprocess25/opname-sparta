@@ -1423,6 +1423,11 @@ app.patch("/api/opname/approve", async (req, res) => {
       return res.status(404).json({ message: "Item tidak ditemukan." });
     }
 
+    const approvalBefore = (target.get("approval_status") || "")
+      .toString()
+      .trim()
+      .toUpperCase();
+
     target.set("approval_status", "APPROVED"); // konsisten
     if (kontraktor_username && String(kontraktor_username).trim()) {
       // Ubah input apa pun (email/nama perusahaan/username) menjadi username standar dari data_kontraktor (kolom E)
@@ -1461,6 +1466,85 @@ app.patch("/api/opname/approve", async (req, res) => {
     }
 
     await target.save();
+
+    // Akumulasi nilai ke sheet summary sekali saja (hindari dobel jika item yang sama di-approve ulang)
+    if (approvalBefore !== "APPROVED") {
+      const norm = (v) =>
+        (v ?? "")
+          .toString()
+          .trim()
+          .toUpperCase()
+          .replace(/\s+/g, " ");
+      const toNum = (v) => {
+        const n = Number(String(v ?? "").replace(/[^0-9.\-]/g, ""));
+        return Number.isFinite(n) ? n : 0;
+      };
+      const pickHeader = (headersList, candidates) => {
+        return (
+          headersList.find((h) =>
+            candidates.some((c) => norm(h) === norm(c))
+          ) || null
+        );
+      };
+
+      const category = norm(target.get("kategori_pekerjaan"));
+      const amount = toNum(target.get("total_harga_akhir"));
+
+      const summarySheet = doc.sheetsByTitle["summary"];
+      if (summarySheet) {
+        await summarySheet.loadHeaderRow();
+        const summaryHeaders = summarySheet.headerValues || [];
+
+        const noUlokKey = pickHeader(summaryHeaders, [
+          "no_ulok",
+          "No_Ulok",
+          "Nomor Ulok",
+          "Nomor_Ulok",
+          "NO_ULOK",
+        ]);
+        const lingkupKey = pickHeader(summaryHeaders, [
+          "lingkup_pekerjaan",
+          "Lingkup_Pekerjaan",
+          "Lingkup Pekerjaan",
+          "LINGKUP_PEKERJAAN",
+        ]);
+        const beanspotKey = pickHeader(summaryHeaders, ["Pekerjaan Beanspot"]);
+        const areaTerbukaKey = pickHeader(summaryHeaders, [
+          "Pekerjaan Area Terbuka",
+        ]);
+
+        let targetSummaryKey = null;
+        if (category.includes("BEANSPOT")) {
+          targetSummaryKey = beanspotKey;
+        } else if (category.includes("AREA TERBUKA")) {
+          targetSummaryKey = areaTerbukaKey;
+        }
+
+        if (targetSummaryKey && noUlokKey) {
+          const summaryRows = await summarySheet.getRows();
+          const noUlok = target.get("no_ulok") || "";
+          const lingkup = target.get("lingkup_pekerjaan") || "";
+
+          const byUlok = summaryRows.filter(
+            (r) => norm(r.get(noUlokKey)) === norm(noUlok)
+          );
+
+          let summaryRow = byUlok[0] || null;
+          if (byUlok.length > 1 && lingkupKey) {
+            summaryRow =
+              byUlok.find((r) => norm(r.get(lingkupKey)) === norm(lingkup)) ||
+              byUlok[0] ||
+              null;
+          }
+
+          if (summaryRow) {
+            const current = toNum(summaryRow.get(targetSummaryKey));
+            summaryRow.set(targetSummaryKey, current + amount);
+            await summaryRow.save();
+          }
+        }
+      }
+    }
 
     return res.status(200).json({ message: "Berhasil di-approve." });
   } catch (error) {
