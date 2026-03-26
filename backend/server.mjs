@@ -105,6 +105,8 @@ const resolveContractorUsername = async (input) => {
     const hit = rows.find(r =>
       norm(r.get("kontraktor_username")) === norm(raw) ||
       norm(r.get("nama_kontraktor")) === norm(raw)
+      // beberapa baris kolom C pernah berisi email → samakan juga
+      // norm(r.get("nama_kontraktor")) === norm(raw.split(",")[0])
     );
 
     return hit?.get("kontraktor_username")
