@@ -1038,91 +1038,57 @@ app.post("/api/opname/item/submit", async (req, res) => {
 // --- Endpoint untuk Kontraktor ---
 app.get("/api/toko_kontraktor", async (req, res) => {
   try {
-    // Terima email / nama_kontraktor / kontraktor_username → normalkan dulu
+    // Request tetap pakai username/email
     const raw = (req.query.username || req.query.email || "").toString().trim();
     if (!raw) {
-      return res
-        .status(400)
-        .json({ message: "Username Kontraktor diperlukan." });
+      return res.status(400).json({
+        message: "Parameter username atau email diperlukan.",
+      });
     }
-    const kontraktorUsername = await resolveContractorUsername(raw);
 
     await doc.loadInfo();
     const rabSheet = doc.sheetsByTitle["data_rab"];
-    const kontrSheet = doc.sheetsByTitle["data_kontraktor"];
     if (!rabSheet) {
       return res
         .status(500)
         .json({ message: "Sheet 'data_rab' tidak ditemukan." });
     }
 
-    const rabRows = await rabSheet.getRows();
+    const rows = await rabSheet.getRows();
     const norm = (v) => (v ?? "").toString().trim().toLowerCase();
 
-    // 1) filter utama: kolom kontraktor_username di data_rab
-    let assignedRows = rabRows.filter(
-      (row) => norm(row.get("kontraktor_username")) === norm(kontraktorUsername)
+    // Cari langsung di kolom kontraktor_username sesuai request username/email
+    const filtered = rows.filter(
+      (row) => norm(row.get("kontraktor_username")) === norm(raw)
     );
 
-    // 2) fallback: pakai peta cabang dari data_kontraktor berbasis kontraktor_username (bukan nama)
-    if (assignedRows.length === 0 && kontrSheet) {
-      const kRows = await kontrSheet.getRows();
-      const cabangs = new Set(
-        kRows
-          .filter(
-            (r) =>
-              norm(r.get("kontraktor_username")) === norm(kontraktorUsername) &&
-              String(r.get("status_kontraktor") || "").toUpperCase() === "AKTIF"
-          )
-          .map((r) => (r.get("nama_cabang") || "").toString().trim())
-      );
-
-      if (cabangs.size > 0) {
-        assignedRows = rabRows.filter((row) => {
-          const kode = (row.get("kode_toko") || "").toString().trim();
-          const nama = (row.get("nama_toko") || "").toString().trim();
-          // sesuaikan jika kamu juga menyimpan 'nama_cabang' di data_rab
-          return cabangs.has(kode) || cabangs.has(nama);
-        });
-      }
-    }
-
-    // ---- kelompokkan per kode_toko, gabungkan semua no_ulok ----
-    // ... (kode filter assignedRows sebelumnya tetap sama) ...
-
-    // ---- REVISI: Kelompokkan berdasarkan KOMBINASI (Kode Toko + Nama Toko) ----
+    // Group per toko, no_ulok dibuat unik
     const storesMap = new Map();
-
-    for (const row of assignedRows) {
+    for (const row of filtered) {
       const kode_toko = (row.get("kode_toko") || "").toString().trim();
       const nama_toko = (row.get("nama_toko") || "").toString().trim();
       const no_ulok = (row.get("no_ulok") || "").toString().trim();
-      const link_pdf = (row.get("link_pdf") || "").toString().trim();
 
-      if (!kode_toko) continue;
+      if (!kode_toko && !nama_toko) continue;
 
-      // KUNCI UNIK: Gabungan Kode dan Nama
-      const compositeKey = `${kode_toko}__${nama_toko}`;
-
-      if (!storesMap.has(compositeKey)) {
-        storesMap.set(compositeKey, {
+      const key = `${kode_toko}__${nama_toko}`;
+      if (!storesMap.has(key)) {
+        storesMap.set(key, {
           kode_toko,
           nama_toko,
-          link_pdf,
           no_uloks: new Set(),
         });
       }
 
       if (no_ulok) {
-        storesMap.get(compositeKey).no_uloks.add(no_ulok);
+        storesMap.get(key).no_uloks.add(no_ulok);
       }
     }
 
-    const result = Array.from(storesMap.values()).map((s) => ({
-      kode_toko: s.kode_toko,
-      nama_toko: s.nama_toko,
-      link_pdf: s.link_pdf,
-      no_uloks: Array.from(s.no_uloks),
+    const result = Array.from(storesMap.values()).map((store) => ({
+      kode_toko: store.kode_toko,
+      nama_toko: store.nama_toko,
+      no_uloks: Array.from(store.no_uloks),
     }));
 
     return res.status(200).json(result);
@@ -1131,6 +1097,8 @@ app.get("/api/toko_kontraktor", async (req, res) => {
     return res.status(500).json({ message: "Terjadi kesalahan pada server." });
   }
 });
+
+
 
 
 // --- Endpoint untuk Melihat Data Final (Approved) ---
