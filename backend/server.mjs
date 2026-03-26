@@ -104,9 +104,7 @@ const resolveContractorUsername = async (input) => {
 
     const hit = rows.find(r =>
       norm(r.get("kontraktor_username")) === norm(raw) ||
-      norm(r.get("nama_kontraktor")) === norm(raw) ||
-      // beberapa baris kolom C pernah berisi email → samakan juga
-      norm(r.get("nama_kontraktor")) === norm(raw.split(",")[0])
+      norm(r.get("nama_kontraktor")) === norm(raw)
     );
 
     return hit?.get("kontraktor_username")
@@ -1034,6 +1032,7 @@ app.post("/api/opname/item/submit", async (req, res) => {
     });
   }
 });
+
 // --- Endpoint untuk Kontraktor ---
 app.get("/api/toko_kontraktor", async (req, res) => {
   try {
