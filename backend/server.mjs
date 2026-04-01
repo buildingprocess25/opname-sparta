@@ -10,6 +10,7 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import axios from "axios";
 import sharp from "sharp";
+import { google } from "googleapis";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
@@ -197,18 +198,101 @@ const getPicNameByUsername = async (username) => {
   }
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableSheetsError = (error) => {
+  const status =
+    error?.response?.status ||
+    error?.status ||
+    error?.code ||
+    error?.response?.data?.error?.code;
+
+  // Retry untuk rate-limit, timeout, dan server-side errors.
+  return [408, 429, 500, 502, 503, 504].includes(Number(status));
+};
+
+const appendLogWithInsertRows = async ({ username, timestamp, status }) => {
+  const sheets = google.sheets({ version: "v4", auth: serviceAccountAuth });
+
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: process.env.SPREADSHEET_ID,
+    range: "log_login!A:C",
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    requestBody: {
+      values: [[username, timestamp, status]],
+    },
+  });
+};
+
 const logLoginAttempt = async (username, status) => {
+  const timestamp = new Date().toLocaleString("id-ID", {
+    timeZone: "Asia/Jakarta",
+  });
+
+  const maxAttempts = 4;
+  const baseDelayMs = 400;
+
+  const withRetry = async (writer, writerName) => {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await writer();
+        return true;
+      } catch (error) {
+        lastError = error;
+        const shouldRetry = isRetryableSheetsError(error) && attempt < maxAttempts;
+
+        if (!shouldRetry) {
+          break;
+        }
+
+        const jitter = Math.floor(Math.random() * 120);
+        const backoff = baseDelayMs * 2 ** (attempt - 1) + jitter;
+        console.warn(
+          `[log_login] ${writerName} gagal (attempt ${attempt}/${maxAttempts}), retry in ${backoff}ms`
+        );
+        await sleep(backoff);
+      }
+    }
+
+    if (lastError) {
+      console.error(`[log_login] ${writerName} gagal total:`, lastError?.message || lastError);
+    }
+
+    return false;
+  };
+
   try {
     await doc.loadInfo();
     const logSheet = doc.sheetsByTitle["log_login"];
-    if (logSheet) {
-      const timestamp = new Date().toLocaleString("id-ID", {
-        timeZone: "Asia/Jakarta",
-      });
-      await logSheet.addRow({ username, waktu: timestamp, status });
+
+    if (!logSheet) {
+      console.warn("[log_login] Sheet 'log_login' tidak ditemukan. Skip logging.");
+      return;
     }
+
+    // Jalur utama: library addRow (tetap dipakai agar kompatibel dengan header map).
+    const primaryOk = await withRetry(
+      async () => {
+        await logSheet.addRow({ username, waktu: timestamp, status });
+      },
+      "addRow"
+    );
+
+    if (primaryOk) return;
+
+    // Fallback: append langsung via API dengan INSERT_ROWS.
+    await withRetry(
+      async () => {
+        await appendLogWithInsertRows({ username, timestamp, status });
+      },
+      "values.append INSERT_ROWS"
+    );
   } catch (logError) {
-    console.error("Gagal menulis ke log_login:", logError);
+    // Logging tidak boleh mengganggu login.
+    console.error("Gagal menulis ke log_login (non-blocking):", logError);
   }
 };
 
