@@ -563,12 +563,12 @@ app.get("/api/toko", async (req, res) => {
 
     const norm = (v) => (v ?? "").toString().trim().toUpperCase();
 
-    // Ambil baris PIC dari tab Cabang
-    const picRow = userRows.find(
-      (r) =>
-        norm(r.get("EMAIL_SAT")) === norm(username) &&
-        (r.get("role") || "").toLowerCase() === "pic"
-    );
+    // Ambil SEMUA baris PIC dari tab Cabang berdasarkan email (bisa multi-cabang)
+    const picRows = userRows.filter((r) => {
+      const sameEmail = norm(r.get("EMAIL_SAT")) === norm(username);
+      const role = (r.get("role") || "").toString().trim().toLowerCase();
+      return sameEmail && (role === "pic" || role === "");
+    });
 
     // Helper ambil nilai dari beberapa kemungkinan header
     const getFirst = (row, keys) => {
@@ -582,43 +582,45 @@ app.get("/api/toko", async (req, res) => {
 
     let assignedRows = [];
 
-    if (picRow) {
-      // ⬅️ Tambahkan 'store' & 'company' (opsional: 'password')
-      const rawCabang = getFirst(picRow, [
-        "kode_toko",
-        "store",
-        "STORE",
-        "company",
-        "COMPANY",
-        "cabang",
-        "CABANG",
-        "nama_cabang",
-        "NAMA_CABANG",
-        "homebase",
-        "HOMEBASE",
-        "wilayah",
-        "WILAYAH",
-        // kalau kamu memang menaruh cabang di password PIC, buka komentar ini:
-        // "password", "PASSWORD",
-      ]);
+    if (picRows.length > 0) {
+      const cabangSet = new Set();
 
-      if (rawCabang) {
-        // dukung multi-cabang: pisah dengan koma/semicolon/pipe
-        const cabangList = rawCabang
+      picRows.forEach((picRow) => {
+        const rawCabang = getFirst(picRow, [
+          "kode_toko",
+          "store",
+          "STORE",
+          "company",
+          "COMPANY",
+          "cabang",
+          "CABANG",
+          "nama_cabang",
+          "NAMA_CABANG",
+          "homebase",
+          "HOMEBASE",
+          "wilayah",
+          "WILAYAH",
+        ]);
+
+        if (!rawCabang) return;
+
+        // dukung multi-cabang per baris: pisah dengan koma/semicolon/pipe
+        rawCabang
           .split(/[,;|]/)
           .map((s) => norm(s))
-          .filter(Boolean);
+          .filter(Boolean)
+          .forEach((cbg) => cabangSet.add(cbg));
+      });
 
-        const matchByCabang = (row) => {
+      if (cabangSet.size > 0) {
+        assignedRows = rabRows.filter((row) => {
           const kandidat = [
             norm(row.get("kode_toko")),
             norm(row.get("nama_toko")),
-            norm(row.get("cabang")), // jika suatu saat kamu menambah kolom 'cabang' di data_rab
+            norm(row.get("cabang")),
           ];
-          return cabangList.some((cbg) => kandidat.includes(cbg));
-        };
-
-        assignedRows = rabRows.filter(matchByCabang);
+          return kandidat.some((k) => cabangSet.has(k));
+        });
       }
 
       // Fallback lama: jika belum ketemu, pakai pic_username di data_rab
