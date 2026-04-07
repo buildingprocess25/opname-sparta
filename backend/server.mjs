@@ -19,6 +19,17 @@ dotenv.config({ path: "./.env.local" });
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const logServer = (level, scope, message, meta) => {
+  const ts = new Date().toISOString();
+  const suffix = meta ? ` | ${JSON.stringify(meta)}` : "";
+  console[level](`[${ts}] [${scope}] ${message}${suffix}`);
+};
+const logInfo = (scope, message, meta) => logServer("log", scope, message, meta);
+const logWarn = (scope, message, meta) =>
+  logServer("warn", scope, message, meta);
+const logError = (scope, message, meta) =>
+  logServer("error", scope, message, meta);
+
 // 3. Middleware
 const allowedOrigins = [
   "https://opnamebnm.vercel.app",
@@ -40,6 +51,26 @@ app.use(
 
 app.use(express.json());
 const upload = multer({ storage: multer.memoryStorage() });
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  logInfo("http", "request:start", {
+    method: req.method,
+    path: req.originalUrl,
+    ip: req.ip,
+  });
+
+  res.on("finish", () => {
+    logInfo("http", "request:finish", {
+      method: req.method,
+      path: req.originalUrl,
+      status: res.statusCode,
+      duration_ms: Date.now() - start,
+    });
+  });
+
+  next();
+});
 
 // 4. Konfigurasi Cloudinary
 cloudinary.config({
@@ -95,6 +126,7 @@ const doc = new GoogleSpreadsheet(
 // Normalisasi input (email / nama_kontraktor / username) → kontraktor_username dari sheet data_kontraktor (kolom E)
 const resolveContractorUsername = async (input) => {
   try {
+    logInfo("resolveContractorUsername", "start", { input });
     await doc.loadInfo();
     const sheet = doc.sheetsByTitle["data_kontraktor"];
     if (!sheet) return (input ?? "").toString().trim();
@@ -110,10 +142,13 @@ const resolveContractorUsername = async (input) => {
       || norm(r.get("nama_kontraktor")) === norm(raw.split(",")[0])
     );
 
-    return hit?.get("kontraktor_username")
+    const result = hit?.get("kontraktor_username")
       ? String(hit.get("kontraktor_username")).trim()
       : raw;
+    logInfo("resolveContractorUsername", "resolved", { input, result });
+    return result;
   } catch {
+    logWarn("resolveContractorUsername", "fallback due to error", { input });
     return (input ?? "").toString().trim();
   }
 };
@@ -122,6 +157,7 @@ const resolveContractorUsername = async (input) => {
 // Ambil NAMA perusahaan (kolom C: nama_kontraktor) dari data_kontraktor berdasar input apa pun
 const resolveContractorCompanyName = async (input) => {
   try {
+    logInfo("resolveContractorCompanyName", "start", { input });
     await doc.loadInfo();
     const kontrSheet = doc.sheetsByTitle["data_kontraktor"];
     if (!kontrSheet) return (input ?? "").toString().trim();
@@ -136,10 +172,13 @@ const resolveContractorCompanyName = async (input) => {
       );
     });
 
-    return r?.get("nama_kontraktor")
+    const result = r?.get("nama_kontraktor")
       ? String(r.get("nama_kontraktor")).trim()
       : (input ?? "").toString().trim();
+    logInfo("resolveContractorCompanyName", "resolved", { input, result });
+    return result;
   } catch {
+    logWarn("resolveContractorCompanyName", "fallback due to error", { input });
     return (input ?? "").toString().trim();
   }
 };
@@ -149,6 +188,7 @@ const resolveContractorCompanyName = async (input) => {
 // --- Ambil nama KONTRAKTOR dari sheet 'users' berdasarkan username
 const getContractorNameByUsername = async (username) => {
   try {
+    logInfo("getContractorNameByUsername", "start", { username });
     await doc.loadInfo();
 
     const norm = (v) => (v ?? "").toString().trim().toLowerCase();
@@ -175,15 +215,21 @@ const getContractorNameByUsername = async (username) => {
     }
 
     // 3) Terakhir: pakai saja nilai yang dikirim (biar tetap terisi)
-    return (username ?? "").toString().trim();
+    const fallback = (username ?? "").toString().trim();
+    logInfo("getContractorNameByUsername", "fallback", { username: fallback });
+    return fallback;
   } catch (e) {
-    console.error("Gagal membaca nama kontraktor:", e);
+    logError("getContractorNameByUsername", "failed", {
+      username,
+      error: e?.message || e,
+    });
     return (username ?? "").toString().trim();
   }
 };
 
 const getPicNameByUsername = async (username) => {
   try {
+    logInfo("getPicNameByUsername", "start", { username });
     await doc.loadInfo();
     const usersSheet = doc.sheetsByTitle["users"];
     if (!usersSheet) return "";
@@ -191,9 +237,17 @@ const getPicNameByUsername = async (username) => {
 
     const norm = (v) => (v ?? "").toString().trim().toLowerCase();
     const r = rows.find((row) => norm(row.get("username")) === norm(username));
-    return r?.get("name") || "";
+    const result = r?.get("name") || "";
+    logInfo("getPicNameByUsername", "resolved", {
+      username,
+      found: Boolean(result),
+    });
+    return result;
   } catch (e) {
-    console.error("Gagal membaca nama PIC dari 'users':", e);
+    logError("getPicNameByUsername", "failed", {
+      username,
+      error: e?.message || e,
+    });
     return "";
   }
 };
@@ -226,6 +280,7 @@ const appendLogWithInsertRows = async ({ username, timestamp, status }) => {
 };
 
 const logLoginAttempt = async (username, status) => {
+  logInfo("logLoginAttempt", "start", { username, status });
   const timestamp = new Date().toLocaleString("id-ID", {
     timeZone: "Asia/Jakarta",
   });
@@ -250,15 +305,21 @@ const logLoginAttempt = async (username, status) => {
 
         const jitter = Math.floor(Math.random() * 120);
         const backoff = baseDelayMs * 2 ** (attempt - 1) + jitter;
-        console.warn(
-          `[log_login] ${writerName} gagal (attempt ${attempt}/${maxAttempts}), retry in ${backoff}ms`
-        );
+        logWarn("logLoginAttempt", "retrying", {
+          writerName,
+          attempt,
+          maxAttempts,
+          backoff,
+        });
         await sleep(backoff);
       }
     }
 
     if (lastError) {
-      console.error(`[log_login] ${writerName} gagal total:`, lastError?.message || lastError);
+      logError("logLoginAttempt", "writer_failed", {
+        writerName,
+        error: lastError?.message || lastError,
+      });
     }
 
     return false;
@@ -269,7 +330,7 @@ const logLoginAttempt = async (username, status) => {
     const logSheet = doc.sheetsByTitle["log_login"];
 
     if (!logSheet) {
-      console.warn("[log_login] Sheet 'log_login' tidak ditemukan. Skip logging.");
+      logWarn("logLoginAttempt", "sheet_log_login_not_found");
       return;
     }
 
@@ -290,9 +351,14 @@ const logLoginAttempt = async (username, status) => {
       },
       "values.append INSERT_ROWS"
     );
-  } catch (logError) {
+    logInfo("logLoginAttempt", "done", { username, status });
+  } catch (err) {
     // Logging tidak boleh mengganggu login.
-    console.error("Gagal menulis ke log_login (non-blocking):", logError);
+    logError("logLoginAttempt", "failed_non_blocking", {
+      username,
+      status,
+      error: err?.message || err,
+    });
   }
 };
 
@@ -332,6 +398,7 @@ const makeRabKey = (src) => {
 // --- Endpoint Upload Foto (dengan konversi ke JPEG) ---
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
+    logInfo("POST /api/upload", "start", { hasFile: Boolean(req.file) });
     if (!req.file) {
       return res
         .status(400)
@@ -363,6 +430,9 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
 // --- Endpoint Login (PIC + KONTRAKTOR via data_kontraktor) ---
 app.post("/api/login", async (req, res) => {
   try {
+    logInfo("POST /api/login", "start", {
+      username: req.body?.username || "",
+    });
     await doc.loadInfo();
 
     const { username, password } = req.body;
@@ -472,6 +542,9 @@ app.post("/api/login", async (req, res) => {
 // --- ENDPOINT BARU: PIC & KONTRAKTOR dari tab opname_final (by no_ulok) ---
 app.get("/api/pic-kontraktor-opname", async (req, res) => {
   try {
+    logInfo("GET /api/pic-kontraktor-opname", "start", {
+      no_ulok: req.query?.no_ulok || "",
+    });
     const { no_ulok } = req.query;
     if (!no_ulok)
       return res.status(400).json({ message: "No. Ulok diperlukan." });
@@ -542,6 +615,7 @@ app.get("/api/pic-kontraktor-opname", async (req, res) => {
 // --- Endpoint untuk PIC (by cabang dari tab users) ---
 app.get("/api/toko", async (req, res) => {
   try {
+    logInfo("GET /api/toko", "start", { username: req.query?.username || "" });
     const { username } = req.query;
     if (!username) {
       return res.status(400).json({ message: "Username PIC diperlukan." });
@@ -676,6 +750,7 @@ app.get("/api/toko", async (req, res) => {
 // --- ENDPOINT BARU: Mengambil daftar unik no_ulok untuk kode_toko tertentu ---
 app.get("/api/uloks", async (req, res) => {
   try {
+    logInfo("GET /api/uloks", "start", { kode_toko: req.query?.kode_toko || "" });
     const { kode_toko } = req.query;
     if (!kode_toko)
       return res.status(400).json({ message: "Kode toko diperlukan." });
@@ -702,6 +777,11 @@ app.get("/api/uloks", async (req, res) => {
 // --- Endpoint OPNAME (PIC) dengan dukungan filter lingkup_pekerjaan ---
 app.get("/api/opname", async (req, res) => {
   try {
+    logInfo("GET /api/opname", "start", {
+      kode_toko: req.query?.kode_toko || "",
+      no_ulok: req.query?.no_ulok || "",
+      lingkup: req.query?.lingkup || "",
+    });
     const { kode_toko, no_ulok, lingkup } = req.query;
     if (!kode_toko || !no_ulok) {
       return res
@@ -891,6 +971,10 @@ app.get("/api/opname", async (req, res) => {
 // --- ENDPOINT BARU: Ambil daftar LINGKUP (ME/SIPIL) untuk kode_toko + no_ulok ---
 app.get("/api/lingkups", async (req, res) => {
   try {
+    logInfo("GET /api/lingkups", "start", {
+      kode_toko: req.query?.kode_toko || "",
+      no_ulok: req.query?.no_ulok || "",
+    });
     const { kode_toko, no_ulok } = req.query;
     if (!kode_toko || !no_ulok) {
       return res
@@ -934,6 +1018,12 @@ app.get("/api/lingkups", async (req, res) => {
 // --- ENDPOINT SUBMIT OPNAME (UPDATE JIKA ADA, ADD JIKA BARU) ---
 app.post("/api/opname/item/submit", async (req, res) => {
   try {
+    logInfo("POST /api/opname/item/submit", "start", {
+      kode_toko: req.body?.kode_toko || "",
+      no_ulok: req.body?.no_ulok || "",
+      jenis_pekerjaan: req.body?.jenis_pekerjaan || "",
+      pic_username: req.body?.pic_username || "",
+    });
     const itemData = req.body;
 
     // 1. Generate rab_key jika belum ada
@@ -1124,6 +1214,9 @@ app.post("/api/opname/item/submit", async (req, res) => {
 // --- Endpoint untuk Kontraktor ---
 app.get("/api/toko_kontraktor", async (req, res) => {
   try {
+    logInfo("GET /api/toko_kontraktor", "start", {
+      username: req.query?.username || req.query?.email || "",
+    });
     // Request tetap pakai username/email
     const raw = (req.query.username || req.query.email || "").toString().trim();
     if (!raw) {
@@ -1191,6 +1284,11 @@ app.get("/api/toko_kontraktor", async (req, res) => {
 // --- Endpoint untuk Melihat Data Final (Approved) dengan filter no_ulok & lingkup ---
 app.get("/api/opname/final", async (req, res) => {
   try {
+    logInfo("GET /api/opname/final", "start", {
+      kode_toko: req.query?.kode_toko || "",
+      no_ulok: req.query?.no_ulok || "",
+      lingkup: req.query?.lingkup || "",
+    });
     const { kode_toko, no_ulok, lingkup } = req.query;
     if (!kode_toko)
       return res.status(400).json({ message: "Kode toko diperlukan." });
@@ -1265,6 +1363,11 @@ app.get("/api/opname/final", async (req, res) => {
 // --- Endpoint baru untuk mengambil data RAB dari data_rab ---
 app.get("/api/rab", async (req, res) => {
   try {
+    logInfo("GET /api/rab", "start", {
+      kode_toko: req.query?.kode_toko || "",
+      no_ulok: req.query?.no_ulok || "",
+      lingkup: req.query?.lingkup || "",
+    });
     const { kode_toko, no_ulok, lingkup } = req.query;
     if (!kode_toko)
       return res.status(400).json({ message: "Kode toko diperlukan." });
@@ -1319,6 +1422,9 @@ app.get("/api/rab", async (req, res) => {
 // --- Endpoint Jembatan/Proxy Gambar ---
 app.get("/api/image-proxy", async (req, res) => {
   try {
+    logInfo("GET /api/image-proxy", "start", {
+      hasUrl: Boolean(req.query?.url),
+    });
     const { url } = req.query;
     if (!url) {
       return res.status(400).send("URL gambar diperlukan.");
@@ -1335,6 +1441,7 @@ app.get("/api/image-proxy", async (req, res) => {
 // --- ENDPOINT DEBUG untuk troubleshooting ---
 app.get("/api/debug/opname-final", async (req, res) => {
   try {
+    logInfo("GET /api/debug/opname-final", "start");
     await doc.loadInfo();
     const finalSheet = doc.sheetsByTitle["opname_final"];
     if (!finalSheet) {
@@ -1375,6 +1482,7 @@ app.get("/api/debug/opname-final", async (req, res) => {
 // --- ENDPOINT DEBUG untuk melihat headers sheet ---
 app.get("/api/debug/sheet-headers", async (req, res) => {
   try {
+    logInfo("GET /api/debug/sheet-headers", "start");
     await doc.loadInfo();
     const finalSheet = doc.sheetsByTitle["opname_final"];
     if (!finalSheet) {
@@ -1402,6 +1510,10 @@ app.get("/api/debug/sheet-headers", async (req, res) => {
 // --- Ambil item Pending untuk persetujuan ---
 app.get("/api/opname/pending", async (req, res) => {
   try {
+    logInfo("GET /api/opname/pending", "start", {
+      kode_toko: req.query?.kode_toko || "",
+      no_ulok: req.query?.no_ulok || "",
+    });
     const { kode_toko, no_ulok } = req.query;
     if (!kode_toko || !no_ulok) {
       return res
@@ -1458,6 +1570,10 @@ app.get("/api/opname/pending", async (req, res) => {
 // --- Approve item opname ---
 app.patch("/api/opname/approve", async (req, res) => {
   try {
+    logInfo("PATCH /api/opname/approve", "start", {
+      item_id: req.body?.item_id || "",
+      kontraktor_username: req.body?.kontraktor_username || "",
+    });
     const { item_id, kontraktor_username, catatan } = req.body || {}; // ← tambahkan catatan
     if (!item_id) {
       return res.status(400).json({ message: "item_id diperlukan." });
@@ -1611,6 +1727,10 @@ app.patch("/api/opname/approve", async (req, res) => {
 // --- Endpoint REJECT item opname ---
 app.patch("/api/opname/reject", async (req, res) => {
   try {
+    logInfo("PATCH /api/opname/reject", "start", {
+      item_id: req.body?.item_id || "",
+      kontraktor_username: req.body?.kontraktor_username || "",
+    });
     const { item_id, kontraktor_username, catatan } = req.body; // ← tambahkan catatan
     if (!item_id) {
       return res.status(400).json({ message: "item_id diperlukan." });
@@ -1679,6 +1799,11 @@ app.patch("/api/opname/reject", async (req, res) => {
 // --- ENDPOINT BARU: daftar unik PIC (by no_ulok + lingkup, opsi filter kode_toko) ---
 app.get("/api/pic-list", async (req, res) => {
   try {
+    logInfo("GET /api/pic-list", "start", {
+      no_ulok: req.query?.no_ulok || "",
+      lingkup: req.query?.lingkup || "",
+      kode_toko: req.query?.kode_toko || "",
+    });
     const { no_ulok, lingkup, kode_toko } = req.query;
     if (!no_ulok) return res.status(400).json({ message: "No. Ulok diperlukan." });
 
@@ -1722,6 +1847,10 @@ app.get("/api/pic-list", async (req, res) => {
 // --- ENDPOINT CEK KETERLAMBATAN ---
 app.get("/api/cek_keterlambatan", async (req, res) => {
   try {
+    logInfo("GET /api/cek_keterlambatan", "start", {
+      no_ulok: req.query?.no_ulok || "",
+      lingkup_pekerjaan: req.query?.lingkup_pekerjaan || "",
+    });
     const { no_ulok, lingkup_pekerjaan } = req.query;
 
     if (!no_ulok || !lingkup_pekerjaan) {
