@@ -121,66 +121,97 @@ const doc = new GoogleSpreadsheet(
 // FUNGSI BANTU
 // =================================================================
 
+const HEADER_CACHE_TTL_MS = 10 * 60 * 1000;
+const CONTRACTOR_CACHE_TTL_MS = 5 * 60 * 1000;
+const sheetHeaderCache = new Map();
+const contractorDirectoryCache = {
+  expiresAt: 0,
+  rows: [],
+};
+
 // Cari "username" kontraktor standar dari data_kontraktor (kolom E: kontraktor_username)
 // Input bisa berupa email, nama perusahaan, atau sudah username; keluaran: username standar (mis. "PIPIT")
 // Normalisasi input (email / nama_kontraktor / username) → kontraktor_username dari sheet data_kontraktor (kolom E)
-const resolveContractorUsername = async (input) => {
+const resolveContractorProfile = async (input) => {
+  const raw = (input ?? "").toString().trim();
+  const norm = (v) => (v ?? "").toString().trim().toLowerCase();
+
   try {
-    logInfo("resolveContractorUsername", "start", { input });
-    await doc.loadInfo();
-    const sheet = doc.sheetsByTitle["data_kontraktor"];
-    if (!sheet) return (input ?? "").toString().trim();
+    const rows = await getContractorDirectoryRows();
+    const rawHead = raw.split(",")[0].trim();
 
-    const rows = await sheet.getRows();
-    const norm = (v) => (v ?? "").toString().trim().toLowerCase();
-    const raw = (input ?? "").toString().trim();
-
-    const hit = rows.find(r =>
-      norm(r.get("kontraktor_username")) === norm(raw) ||
-      norm(r.get("nama_kontraktor")) === norm(raw)
-      // beberapa baris kolom C pernah berisi email → samakan juga
-      || norm(r.get("nama_kontraktor")) === norm(raw.split(",")[0])
+    const hit = rows.find(
+      (r) =>
+        norm(r.kontraktor_username) === norm(raw) ||
+        norm(r.nama_kontraktor) === norm(raw) ||
+        norm(r.nama_kontraktor) === norm(rawHead)
     );
 
-    const result = hit?.get("kontraktor_username")
-      ? String(hit.get("kontraktor_username")).trim()
-      : raw;
-    logInfo("resolveContractorUsername", "resolved", { input, result });
-    return result;
-  } catch {
-    logWarn("resolveContractorUsername", "fallback due to error", { input });
-    return (input ?? "").toString().trim();
+    return {
+      username: hit?.kontraktor_username || raw,
+      companyName: hit?.nama_kontraktor || raw,
+    };
+  } catch (e) {
+    logWarn("resolveContractorProfile", "fallback due to error", {
+      input,
+      error: e?.message || e,
+    });
+    return {
+      username: raw,
+      companyName: raw,
+    };
   }
 };
 
+const resolveContractorUsername = async (input) => {
+  logInfo("resolveContractorUsername", "start", { input });
+  const profile = await resolveContractorProfile(input);
+  logInfo("resolveContractorUsername", "resolved", {
+    input,
+    result: profile.username,
+  });
+  return profile.username;
+};
 
 // Ambil NAMA perusahaan (kolom C: nama_kontraktor) dari data_kontraktor berdasar input apa pun
 const resolveContractorCompanyName = async (input) => {
-  try {
-    logInfo("resolveContractorCompanyName", "start", { input });
-    await doc.loadInfo();
-    const kontrSheet = doc.sheetsByTitle["data_kontraktor"];
-    if (!kontrSheet) return (input ?? "").toString().trim();
+  logInfo("resolveContractorCompanyName", "start", { input });
+  const profile = await resolveContractorProfile(input);
+  logInfo("resolveContractorCompanyName", "resolved", {
+    input,
+    result: profile.companyName,
+  });
+  return profile.companyName;
+};
 
-    const rows = await kontrSheet.getRows();
-    const norm = (v) => (v ?? "").toString().trim().toLowerCase();
-
-    const r = rows.find((row) => {
-      return (
-        norm(row.get("kontraktor_username")) === norm(input) ||
-        norm(row.get("nama_kontraktor")) === norm(input)
-      );
-    });
-
-    const result = r?.get("nama_kontraktor")
-      ? String(r.get("nama_kontraktor")).trim()
-      : (input ?? "").toString().trim();
-    logInfo("resolveContractorCompanyName", "resolved", { input, result });
-    return result;
-  } catch {
-    logWarn("resolveContractorCompanyName", "fallback due to error", { input });
-    return (input ?? "").toString().trim();
+const getContractorDirectoryRows = async (forceRefresh = false) => {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    contractorDirectoryCache.expiresAt > now &&
+    contractorDirectoryCache.rows.length > 0
+  ) {
+    return contractorDirectoryCache.rows;
   }
+
+  await withSheetsRetry(() => doc.loadInfo(), "contractor:doc.loadInfo");
+  const sheet = doc.sheetsByTitle["data_kontraktor"];
+  if (!sheet) {
+    contractorDirectoryCache.rows = [];
+    contractorDirectoryCache.expiresAt = now + CONTRACTOR_CACHE_TTL_MS;
+    return contractorDirectoryCache.rows;
+  }
+
+  const rows = await withSheetsRetry(
+    () => sheet.getRows(),
+    "contractor:data_kontraktor.getRows"
+  );
+  contractorDirectoryCache.rows = rows.map((row) => ({
+    kontraktor_username: (row.get("kontraktor_username") || "").toString().trim(),
+    nama_kontraktor: (row.get("nama_kontraktor") || "").toString().trim(),
+  }));
+  contractorDirectoryCache.expiresAt = now + CONTRACTOR_CACHE_TTL_MS;
+  return contractorDirectoryCache.rows;
 };
 
 
@@ -263,6 +294,56 @@ const isRetryableSheetsError = (error) => {
 
   // Retry untuk rate-limit, timeout, dan server-side errors.
   return [408, 429, 500, 502, 503, 504].includes(Number(status));
+};
+
+const withSheetsRetry = async (operation, operationName, options = {}) => {
+  const maxAttempts = options.maxAttempts || 4;
+  const baseDelayMs = options.baseDelayMs || 400;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const shouldRetry =
+        isRetryableSheetsError(error) && attempt < maxAttempts;
+      if (!shouldRetry) break;
+
+      const jitter = Math.floor(Math.random() * 120);
+      const backoff = baseDelayMs * 2 ** (attempt - 1) + jitter;
+      logWarn("withSheetsRetry", "retrying", {
+        operationName,
+        attempt,
+        maxAttempts,
+        backoff,
+      });
+      await sleep(backoff);
+    }
+  }
+
+  throw lastError;
+};
+
+const getSheetHeadersCached = async (sheet, forceRefresh = false) => {
+  const key = sheet?.sheetId ? String(sheet.sheetId) : sheet?.title || "unknown";
+  const now = Date.now();
+  const cached = sheetHeaderCache.get(key);
+
+  if (!forceRefresh && cached && cached.expiresAt > now) {
+    return cached.headers;
+  }
+
+  await withSheetsRetry(
+    () => sheet.loadHeaderRow(),
+    `loadHeaderRow:${sheet?.title || key}`
+  );
+  const headers = sheet.headerValues || [];
+  sheetHeaderCache.set(key, {
+    headers,
+    expiresAt: now + HEADER_CACHE_TTL_MS,
+  });
+  return headers;
 };
 
 const appendLogWithInsertRows = async ({ username, timestamp, status }) => {
@@ -1579,7 +1660,7 @@ app.patch("/api/opname/approve", async (req, res) => {
       return res.status(400).json({ message: "item_id diperlukan." });
     }
 
-    await doc.loadInfo();
+    await withSheetsRetry(() => doc.loadInfo(), "approve:doc.loadInfo");
     const finalSheet = doc.sheetsByTitle["opname_final"];
     if (!finalSheet) {
       return res
@@ -1587,7 +1668,10 @@ app.patch("/api/opname/approve", async (req, res) => {
         .json({ message: "Sheet 'opname_final' tidak ditemukan." });
     }
 
-    const rows = await finalSheet.getRows();
+    const rows = await withSheetsRetry(
+      () => finalSheet.getRows(),
+      "approve:opname_final.getRows"
+    );
     const target = rows.find((r) => (r.get("item_id") || "") === item_id);
 
     if (!target) {
@@ -1601,20 +1685,16 @@ app.patch("/api/opname/approve", async (req, res) => {
 
     target.set("approval_status", "APPROVED"); // konsisten
     if (kontraktor_username && String(kontraktor_username).trim()) {
-      // Ubah input apa pun (email/nama perusahaan/username) menjadi username standar dari data_kontraktor (kolom E)
-      const storedUsername = await resolveContractorUsername(kontraktor_username);
-      target.set("kontraktor_username", storedUsername);
-
-      // Isi kolom 'kontraktor' dengan NAMA PERUSAHAAN dari data_kontraktor (kolom C)
-      const companyName = await resolveContractorCompanyName(storedUsername);
-      if (companyName) {
-        target.set("kontraktor", companyName);
+      const profile = await resolveContractorProfile(kontraktor_username);
+      if (profile.username) {
+        target.set("kontraktor_username", profile.username);
+      }
+      if (profile.companyName) {
+        target.set("kontraktor", profile.companyName);
       }
     }
 
-
-    await finalSheet.loadHeaderRow();
-    const headers = finalSheet.headerValues || [];
+    const headers = await getSheetHeadersCached(finalSheet);
     const CAT_KEY = headers.includes("catatan")
       ? "catatan"
       : headers.includes("Catatan")
@@ -1636,7 +1716,7 @@ app.patch("/api/opname/approve", async (req, res) => {
       target.set(CAT_KEY, appended);
     }
 
-    await target.save();
+    await withSheetsRetry(() => target.save(), "approve:target.save");
 
     // Akumulasi nilai ke sheet summary sekali saja (hindari dobel jika item yang sama di-approve ulang)
     if (approvalBefore !== "APPROVED") {
@@ -1663,8 +1743,7 @@ app.patch("/api/opname/approve", async (req, res) => {
 
       const summarySheet = doc.sheetsByTitle["summary"];
       if (summarySheet) {
-        await summarySheet.loadHeaderRow();
-        const summaryHeaders = summarySheet.headerValues || [];
+        const summaryHeaders = await getSheetHeadersCached(summarySheet);
 
         const noUlokKey = pickHeader(summaryHeaders, [
           "no_ulok",
@@ -1692,7 +1771,10 @@ app.patch("/api/opname/approve", async (req, res) => {
         }
 
         if (targetSummaryKey && noUlokKey) {
-          const summaryRows = await summarySheet.getRows();
+          const summaryRows = await withSheetsRetry(
+            () => summarySheet.getRows(),
+            "approve:summary.getRows"
+          );
           const noUlok = target.get("no_ulok") || "";
           const lingkup = target.get("lingkup_pekerjaan") || "";
 
@@ -1711,7 +1793,7 @@ app.patch("/api/opname/approve", async (req, res) => {
           if (summaryRow) {
             const current = toNum(summaryRow.get(targetSummaryKey));
             summaryRow.set(targetSummaryKey, current + amount);
-            await summaryRow.save();
+            await withSheetsRetry(() => summaryRow.save(), "approve:summary.save");
           }
         }
       }
@@ -1736,7 +1818,7 @@ app.patch("/api/opname/reject", async (req, res) => {
       return res.status(400).json({ message: "item_id diperlukan." });
     }
 
-    await doc.loadInfo();
+    await withSheetsRetry(() => doc.loadInfo(), "reject:doc.loadInfo");
     const finalSheet = doc.sheetsByTitle["opname_final"];
     if (!finalSheet) {
       return res
@@ -1744,7 +1826,10 @@ app.patch("/api/opname/reject", async (req, res) => {
         .json({ message: "Sheet 'opname_final' tidak ditemukan." });
     }
 
-    const rows = await finalSheet.getRows();
+    const rows = await withSheetsRetry(
+      () => finalSheet.getRows(),
+      "reject:opname_final.getRows"
+    );
     const row = rows.find((r) => r.get("item_id") === item_id);
     if (!row) {
       return res.status(404).json({ message: "Item tidak ditemukan." });
@@ -1753,19 +1838,18 @@ app.patch("/api/opname/reject", async (req, res) => {
     // Update status jadi REJECTED
     row.set("approval_status", "REJECTED");
     if (kontraktor_username && String(kontraktor_username).trim()) {
-      const storedUsername = await resolveContractorUsername(kontraktor_username);
-      row.set("kontraktor_username", storedUsername);
-
-      const companyName = await resolveContractorCompanyName(storedUsername);
-      if (companyName) {
-        row.set("kontraktor", companyName);
+      const profile = await resolveContractorProfile(kontraktor_username);
+      if (profile.username) {
+        row.set("kontraktor_username", profile.username);
+      }
+      if (profile.companyName) {
+        row.set("kontraktor", profile.companyName);
       }
     }
 
 
     // 🔹 Tambah catatan
-    await finalSheet.loadHeaderRow();
-    const headers = finalSheet.headerValues || [];
+    const headers = await getSheetHeadersCached(finalSheet);
     const CAT_KEY = headers.includes("catatan")
       ? "catatan"
       : headers.includes("Catatan")
@@ -1787,7 +1871,7 @@ app.patch("/api/opname/reject", async (req, res) => {
       row.set(CAT_KEY, appended);
     }
 
-    await row.save();
+    await withSheetsRetry(() => row.save(), "reject:row.save");
 
     return res.status(200).json({ message: "Item berhasil di-reject." });
   } catch (err) {
