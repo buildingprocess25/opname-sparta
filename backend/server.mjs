@@ -450,6 +450,17 @@ const _numKey = (v) => {
   const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
   return Number.isFinite(n) ? n : 0;
 };
+const isIlValue = (v) =>
+  ["YA", "Y", "YES", "TRUE", "1"].includes(_normKey(v));
+const getIlKeyPart = (src) => {
+  if (!src) return "RAB";
+  if (src.get) return isIlValue(src.get("IL")) ? "IL" : "RAB";
+  return src.is_il || isIlValue(src.IL) ? "IL" : "RAB";
+};
+const makeScopedRabKey = (baseKey, src) => {
+  const cleanBase = String(baseKey || "").trim().replace(/\|\|(IL|RAB)$/i, "");
+  return [cleanBase, getIlKeyPart(src)].join("||");
+};
 /**
  * Buat rab_key dari kombinasi field yang stabil.
  * Bisa dipanggil dengan row GoogleSheet (punya .get) atau object itemData.
@@ -468,7 +479,9 @@ const makeRabKey = (src) => {
     src.get ? src.get("harga_material") : src.harga_material
   );
   const hupah = _numKey(src.get ? src.get("harga_upah") : src.harga_upah);
-  return [kode, ulok, ling, jenis, satuan, hmat, hupah].join("||");
+  return [kode, ulok, ling, jenis, satuan, hmat, hupah, getIlKeyPart(src)].join(
+    "||"
+  );
 };
 // <<<<< SAMPAI SINI >>>>>
 
@@ -927,7 +940,8 @@ app.get("/api/opname", async (req, res) => {
         desain: row.get("desain") || "",
         kualitas: row.get("kualitas") || "",
         spesifikasi: row.get("spesifikasi") || "",
-        rab_key: row.get("rab_key") || "",
+        rab_key: makeScopedRabKey(row.get("rab_key") || makeRabKey(row), row),
+        is_il: isIlValue(row.get("IL")),
         catatan: getCatatan(row),
       }));
 
@@ -958,7 +972,8 @@ app.get("/api/opname", async (req, res) => {
       rabSatuan,
       rabHargaMat,
       rabHargaUpah,
-      rabKey
+      rabKey,
+      rabIsIl
     ) => {
       // 1) Prioritas: rab_key sama persis
       if (rabKey) {
@@ -971,6 +986,7 @@ app.get("/api/opname", async (req, res) => {
           s.jenis === rabJenis &&
           (s.lingkup || "") === (rabLingkup || "") &&
           String(s.satuan || "") === String(rabSatuan || "") &&
+          Boolean(s.is_il) === Boolean(rabIsIl) &&
           toNum(s.harga_material) === toNum(rabHargaMat) &&
           toNum(s.harga_upah) === toNum(rabHargaUpah)
       );
@@ -992,13 +1008,12 @@ app.get("/api/opname", async (req, res) => {
         const satuan = row.get("satuan");
         const harga_material = row.get("harga_material") || 0;
         const harga_upah = row.get("harga_upah") || 0;
-        const rab_key_raw = row.get("rab_key") || "";
-        const rab_key = rab_key_raw || makeRabKey(row);
 
         // --- TAMBAHAN BARU: BACA KOLOM IL ---
-        const valIL = (row.get("IL") || "").toString().trim().toLowerCase();
-        const is_il = valIL === "ya";
+        const is_il = isIlValue(row.get("IL"));
         // ------------------------------------
+        const rab_key_raw = row.get("rab_key") || "";
+        const rab_key = makeScopedRabKey(rab_key_raw || makeRabKey(row), row);
 
         const matched = takeMatch(
           submittedList,
@@ -1007,7 +1022,8 @@ app.get("/api/opname", async (req, res) => {
           satuan,
           harga_material,
           harga_upah,
-          rab_key
+          rab_key,
+          is_il
         );
 
         return {
@@ -1105,12 +1121,14 @@ app.post("/api/opname/item/submit", async (req, res) => {
       jenis_pekerjaan: req.body?.jenis_pekerjaan || "",
       pic_username: req.body?.pic_username || "",
     });
-    const itemData = req.body;
+    const itemData = req.body || {};
+    const submittedIsIl = Boolean(itemData?.is_il) || isIlValue(itemData?.IL);
 
     // 1. Generate rab_key jika belum ada
-    if (!itemData.rab_key || String(itemData.rab_key).trim() === "") {
-      itemData.rab_key = makeRabKey(itemData);
-    }
+    itemData.rab_key = makeScopedRabKey(itemData.rab_key || makeRabKey(itemData), {
+      ...itemData,
+      is_il: submittedIsIl,
+    });
 
     // 2. Validasi Input
     if (
@@ -1183,7 +1201,8 @@ app.post("/api/opname/item/submit", async (req, res) => {
     if (itemData.rab_key) {
       existingRow = rows.find(
         (row) =>
-          (row.get("rab_key") || "") === itemData.rab_key &&
+          makeScopedRabKey(row.get("rab_key") || makeRabKey(row), row) ===
+          itemData.rab_key &&
           (row.get("kode_toko") || "") === itemData.kode_toko &&
           (row.get("no_ulok") || "") === itemData.no_ulok
       );
@@ -1199,6 +1218,7 @@ app.post("/api/opname/item/submit", async (req, res) => {
           (row.get("kode_toko") || "") === itemData.kode_toko &&
           (row.get("no_ulok") || "") === itemData.no_ulok &&
           (row.get("jenis_pekerjaan") || "") === itemData.jenis_pekerjaan &&
+          isIlValue(row.get("IL")) === submittedIsIl &&
           // 2. Cek Volume RAB (Master)
           toNum(row.get("vol_rab")) === toNum(itemData.vol_rab) &&
           // 3. ✅ PENGECEKAN KETAT HARGA (Kunci Masalah Anda)
@@ -1255,7 +1275,7 @@ app.post("/api/opname/item/submit", async (req, res) => {
       lingkup_pekerjaan: itemData.lingkup_pekerjaan || "",
       rab_key: itemData.rab_key || "",
       name: picName || "",
-      IL: itemData.is_il ? "ya" : "",
+      IL: submittedIsIl ? "ya" : "",
     };
 
     // 5. EKSEKUSI SIMPAN
