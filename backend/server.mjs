@@ -480,14 +480,27 @@ const makeRabKey = (src) => {
   const jenis = _normKey(
     src.get ? src.get("jenis_pekerjaan") : src.jenis_pekerjaan
   );
+  const kategori = _normKey(
+    src.get ? src.get("kategori_pekerjaan") : src.kategori_pekerjaan
+  );
+  const volRab = _numKey(src.get ? src.get("vol_rab") : src.vol_rab);
   const satuan = _normKey(src.get ? src.get("satuan") : src.satuan);
   const hmat = _numKey(
     src.get ? src.get("harga_material") : src.harga_material
   );
   const hupah = _numKey(src.get ? src.get("harga_upah") : src.harga_upah);
-  return [kode, ulok, ling, jenis, satuan, hmat, hupah, getIlKeyPart(src)].join(
-    "||"
-  );
+  return [
+    kode,
+    ulok,
+    ling,
+    kategori,
+    jenis,
+    volRab,
+    satuan,
+    hmat,
+    hupah,
+    getIlKeyPart(src),
+  ].join("||");
 };
 // <<<<< SAMPAI SINI >>>>>
 
@@ -939,6 +952,8 @@ app.get("/api/opname", async (req, res) => {
         tanggal_submit: row.get("tanggal_submit"),
         foto_url: row.get("foto_url"),
         satuan: row.get("satuan"),
+        kategori: row.get("kategori_pekerjaan") || "",
+        vol_rab: row.get("vol_rab"),
         harga_material: row.get("harga_material"),
         harga_upah: row.get("harga_upah"),
         desain: row.get("desain") || "",
@@ -971,8 +986,10 @@ app.get("/api/opname", async (req, res) => {
 
     const takeMatch = (
       subs,
+      rabKategori,
       rabJenis,
       rabLingkup,
+      rabVolRab,
       rabSatuan,
       rabHargaMat,
       rabHargaUpah,
@@ -987,8 +1004,10 @@ app.get("/api/opname", async (req, res) => {
       // 2) Fallback: cocokkan berdasarkan teks/satuan/harga persis (lama)
       const idx = subs.findIndex(
         (s) =>
+          (s.kategori || "") === (rabKategori || "") &&
           s.jenis === rabJenis &&
           (s.lingkup || "") === (rabLingkup || "") &&
+          toNum(s.vol_rab) === toNum(rabVolRab) &&
           String(s.satuan || "") === String(rabSatuan || "") &&
           Boolean(s.is_il) === Boolean(rabIsIl) &&
           toNum(s.harga_material) === toNum(rabHargaMat) &&
@@ -1008,7 +1027,9 @@ app.get("/api/opname", async (req, res) => {
       )
       .map((row) => {
         const jenis_pekerjaan = row.get("jenis_pekerjaan");
+        const kategori_pekerjaan = row.get("kategori_pekerjaan");
         const lingkup_pekerjaan = row.get("lingkup_pekerjaan") || "";
+        const vol_rab = row.get("vol_rab");
         const satuan = row.get("satuan");
         const harga_material = row.get("harga_material") || 0;
         const harga_upah = row.get("harga_upah") || 0;
@@ -1021,8 +1042,10 @@ app.get("/api/opname", async (req, res) => {
 
         const matched = takeMatch(
           submittedList,
+          kategori_pekerjaan,
           jenis_pekerjaan,
           lingkup_pekerjaan,
+          vol_rab,
           satuan,
           harga_material,
           harga_upah,
@@ -1031,10 +1054,10 @@ app.get("/api/opname", async (req, res) => {
         );
 
         return {
-          kategori_pekerjaan: row.get("kategori_pekerjaan"),
+          kategori_pekerjaan,
           lingkup_pekerjaan,
           jenis_pekerjaan,
-          vol_rab: row.get("vol_rab"),
+          vol_rab,
           satuan,
           harga_material,
           harga_upah,
