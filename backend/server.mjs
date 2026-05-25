@@ -447,7 +447,13 @@ const logLoginAttempt = async (username, status) => {
 // -- helper pembuat kunci stabil untuk RAB --
 const _normKey = (v) => (v ?? "").toString().trim().toUpperCase();
 const _numKey = (v) => {
-  const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
+  let s = String(v ?? "").trim().replace(/[^\d,.\-]/g, "");
+  if (s.includes(",") && s.includes(".")) {
+    s = s.replace(/\./g, "").replace(",", ".");
+  } else if (s.includes(",")) {
+    s = s.replace(",", ".");
+  }
+  const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 };
 const isIlValue = (v) =>
@@ -900,9 +906,7 @@ app.get("/api/opname", async (req, res) => {
     const norm = (v) => (v ?? "").toString().trim().toUpperCase();
     const qLing = norm(lingkup || "");
     const toNum = (v) => {
-      if (v === null || v === undefined) return 0;
-      const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
-      return Number.isFinite(n) ? n : 0;
+      return _numKey(v);
     };
 
     // KUMPULKAN SEMUA SUBMISSION (LIST, BUKAN MAP) → supaya bisa match satu-per-satu
@@ -1190,9 +1194,7 @@ app.post("/api/opname/item/submit", async (req, res) => {
 
     // Helper konversi angka
     const toNum = (v) => {
-      if (v === null || v === undefined) return 0;
-      const n = Number(String(v).replace(/[^0-9.\-]/g, ""));
-      return Number.isFinite(n) ? n : 0;
+      return _numKey(v);
     };
 
     // 4. CARI BARIS LAMA
@@ -1747,8 +1749,7 @@ app.patch("/api/opname/approve", async (req, res) => {
           .toUpperCase()
           .replace(/\s+/g, " ");
       const toNum = (v) => {
-        const n = Number(String(v ?? "").replace(/[^0-9.\-]/g, ""));
-        return Number.isFinite(n) ? n : 0;
+        return _numKey(v);
       };
       const pickHeader = (headersList, candidates) => {
         return (
