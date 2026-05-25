@@ -1372,6 +1372,7 @@ app.get("/api/toko_kontraktor", async (req, res) => {
     for (const row of filtered) {
       const kode_toko = (row.get("kode_toko") || "").toString().trim();
       const nama_toko = (row.get("nama_toko") || "").toString().trim();
+      const alamat = (row.get("alamat") || "").toString().trim();
       const no_ulok = (row.get("no_ulok") || "").toString().trim();
 
       if (!kode_toko && !nama_toko) continue;
@@ -1381,6 +1382,7 @@ app.get("/api/toko_kontraktor", async (req, res) => {
         storesMap.set(key, {
           kode_toko,
           nama_toko,
+          alamat,
           no_uloks: new Set(),
         });
       }
@@ -1393,6 +1395,7 @@ app.get("/api/toko_kontraktor", async (req, res) => {
     const result = Array.from(storesMap.values()).map((store) => ({
       kode_toko: store.kode_toko,
       nama_toko: store.nama_toko,
+      alamat: store.alamat,
       no_uloks: Array.from(store.no_uloks),
     }));
 
@@ -1524,6 +1527,10 @@ app.get("/api/rab", async (req, res) => {
       );
     }
     const result = rabItems.map((row) => ({
+      kode_toko: row.get("kode_toko") || "",
+      nama_toko: row.get("nama_toko") || "",
+      alamat: row.get("alamat") || "",
+      no_ulok: row.get("no_ulok") || "",
       kategori_pekerjaan: row.get("kategori_pekerjaan"),
       jenis_pekerjaan: row.get("jenis_pekerjaan"),
       satuan: row.get("satuan"),
